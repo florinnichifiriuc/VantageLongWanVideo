@@ -1,0 +1,440 @@
+{
+  "id": "65421d54-f180-4056-956f-6dfdc1fe0be7",
+  "revision": 0,
+  "last_node_id": 111,
+  "last_link_id": 299,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "CheckpointLoaderSimple",
+      "pos": [
+        377.93988037109375,
+        -73.90348815917969
+      ],
+      "size": [
+        260.9559326171875,
+        98
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            213
+          ]
+        },
+        {
+          "name": "CLIP",
+          "type": "CLIP",
+          "links": [
+            295
+          ]
+        },
+        {
+          "name": "VAE",
+          "type": "VAE",
+          "links": [
+            296
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.49",
+        "Node name for S&R": "CheckpointLoaderSimple",
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        "wan2.2-i2v-rapid-aio-v10.safetensors"
+      ]
+    },
+    {
+      "id": 75,
+      "type": "CLIPVisionLoader",
+      "pos": [
+        374.2685546875,
+        -180.879150390625
+      ],
+      "size": [
+        270,
+        58
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "CLIP_VISION",
+          "type": "CLIP_VISION",
+          "links": [
+            298
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.57",
+        "Node name for S&R": "CLIPVisionLoader"
+      },
+      "widgets_values": [
+        "clip_vision_vit_h.safetensors"
+      ]
+    },
+    {
+      "id": 2,
+      "type": "ModelSamplingSD3",
+      "pos": [
+        382.70654296875,
+        85.40113067626953
+      ],
+      "size": [
+        257.0812072753906,
+        61.14144515991211
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 213
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            299
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.49",
+        "Node name for S&R": "ModelSamplingSD3",
+        "widget_ue_connectable": {}
+      },
+      "widgets_values": [
+        8.000000000000002
+      ]
+    },
+    {
+      "id": 111,
+      "type": "VantageI2VSingleLooper",
+      "pos": [
+        1234.336181640625,
+        -168.4089813232422
+      ],
+      "size": [
+        336.26165771484375,
+        516.7182006835938
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 299
+        },
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 295
+        },
+        {
+          "name": "project_data",
+          "type": "*",
+          "link": 297
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 296
+        },
+        {
+          "name": "clip_vision",
+          "type": "CLIP_VISION",
+          "link": 298
+        },
+        {
+          "name": "start_image",
+          "type": "IMAGE",
+          "link": 293
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": [
+            292
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "VantageI2VSingleLooper"
+      },
+      "widgets_values": [
+        "",
+        384542243523698,
+        "fixed",
+        4,
+        1,
+        "euler_ancestral",
+        "beta",
+        832,
+        480,
+        1,
+        1,
+        "16",
+        0,
+        "center"
+      ]
+    },
+    {
+      "id": 107,
+      "type": "VHS_VideoCombine",
+      "pos": [
+        1587.4228515625,
+        -172.71090698242188
+      ],
+      "size": [
+        704.5543823242188,
+        310
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 292
+        },
+        {
+          "name": "audio",
+          "shape": 7,
+          "type": "AUDIO",
+          "link": null
+        },
+        {
+          "name": "meta_batch",
+          "shape": 7,
+          "type": "VHS_BatchManager",
+          "link": null
+        },
+        {
+          "name": "vae",
+          "shape": 7,
+          "type": "VAE",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "Filenames",
+          "type": "VHS_FILENAMES",
+          "links": null
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfyui-videohelpersuite",
+        "ver": "1.7.4",
+        "Node name for S&R": "VHS_VideoCombine"
+      },
+      "widgets_values": {
+        "frame_rate": 16,
+        "loop_count": 0,
+        "filename_prefix": "long/v",
+        "format": "video/h265-mp4",
+        "pix_fmt": "yuv420p",
+        "crf": 19,
+        "save_metadata": true,
+        "pingpong": false,
+        "save_output": true,
+        "videopreview": {
+          "hidden": false,
+          "paused": false,
+          "params": {
+            "filename": "",
+            "subfolder": "long",
+            "type": "output",
+            "format": "video/h265-mp4",
+            "frame_rate": 16,
+            "workflow": "",
+            "fullpath": ""
+          }
+        }
+      }
+    },
+    {
+      "id": 103,
+      "type": "VantageProject",
+      "pos": [
+        662.3067016601562,
+        -173.798828125
+      ],
+      "size": [
+        549.826904296875,
+        758.9392700195312
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "project_data",
+          "type": "STRING",
+          "links": [
+            297
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "VantageProject"
+      },
+      "widgets_values": [
+        "",
+        "",
+        0,
+        "none",
+        true,
+        "7ebeea6c6a0b42f4ac649f6ca937a908"
+      ]
+    },
+    {
+      "id": 76,
+      "type": "LoadImage",
+      "pos": [
+        380.3900451660156,
+        193.79519653320312
+      ],
+      "size": [
+        262.5061950683594,
+        326
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            293
+          ]
+        },
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": null
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.57",
+        "Node name for S&R": "LoadImage"
+      },
+      "widgets_values": [
+        "example.png",
+        "image"
+      ]
+    }
+  ],
+  "links": [
+    [
+      213,
+      1,
+      0,
+      2,
+      0,
+      "MODEL"
+    ],
+    [
+      292,
+      111,
+      0,
+      107,
+      0,
+      "IMAGE"
+    ],
+    [
+      293,
+      76,
+      0,
+      111,
+      5,
+      "IMAGE"
+    ],
+    [
+      295,
+      1,
+      1,
+      111,
+      1,
+      "CLIP"
+    ],
+    [
+      296,
+      1,
+      2,
+      111,
+      3,
+      "VAE"
+    ],
+    [
+      297,
+      103,
+      0,
+      111,
+      2,
+      "*"
+    ],
+    [
+      298,
+      75,
+      0,
+      111,
+      4,
+      "CLIP_VISION"
+    ],
+    [
+      299,
+      2,
+      0,
+      111,
+      0,
+      "MODEL"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.9570376802782302,
+      "offset": [
+        -363.94163110027,
+        226.92294461870398
+      ]
+    },
+    "frontendVersion": "1.26.11",
+    "ue_links": [],
+    "VHS_latentpreview": false,
+    "VHS_latentpreviewrate": 0,
+    "VHS_MetadataImage": true,
+    "VHS_KeepIntermediate": true,
+    "links_added_by_ue": []
+  },
+  "version": 0.4
+}
