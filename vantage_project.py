@@ -173,7 +173,11 @@ class VantageProject:
     RETURN_NAMES = ("project_data",)
     FUNCTION = "apply"
     CATEGORY = "Vantage"
-
+    
+    def IS_NODE_ONLY_RUNNING_ON_EXECUTED(self):
+        # This method is required if your node has 'ui' outputs
+        return False
+        
     def apply(
         self,
         project_list: str,
@@ -209,19 +213,44 @@ class VantageProject:
         effective_start_prompt = _last_index_plus_one(proj_dir) if not start_prompt or start_prompt <= 0 else start_prompt
         safe_name = project_name or f"project_{pid[:8]}"
 
-        # If a file is selected, treat as update; else create new file from name
-        if is_file:
+        # Decide whether this is an update to an existing file or a new file
+        target_file = None
+        is_update = False
+
+        if is_file and existing_project:
+            # Overwrite the selected file
             target_file = sel
+            is_update = True
         else:
-            target_file = f"{safe_name}.json"
+            # Create a new file name from project_name
+            base_name = _safe_name(project_name) or f"project_{pid[:8]}"
+            if not base_name.lower().endswith(".json"):
+                base_name = f"{base_name}.json"
+
+            # Ensure we don't overwrite an existing file unintentionally
+            candidate = base_name
+            if os.path.isfile(os.path.join(VANTAGE_DIR, candidate)):
+                # If the exact name exists and we are not in update mode, make it unique
+                stem, ext = os.path.splitext(base_name)
+                suffix = 1
+                while os.path.isfile(os.path.join(VANTAGE_DIR, f"{stem}_{suffix}{ext}")):
+                    suffix += 1
+                candidate = f"{stem}_{suffix}{ext}"
+            target_file = candidate
+            is_update = False
 
         path = os.path.join(VANTAGE_DIR, target_file)
 
         prompt_val = positive_text or ""
-        lines = [ln.rstrip("\r") for ln in prompt_val.split("\n")]
+        lines = []
+        for ln in prompt_val.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+            s = ln.strip()
+            if s:  # keep only actual prompts, skip blanks
+                lines.append(s)
+
         data = {
             "id": pid,
-            "name": safe_name,
+            "name": project_name or f"project_{pid[:8]}",
             "prompt": "\n".join(lines),
             "prompt_lines": lines,
             "existing": True,
@@ -230,26 +259,44 @@ class VantageProject:
             "ts": time.time(),
         }
 
-        # Preserve id from disk if updating
-        try:
-            if os.path.isfile(path):
-                with open(path, "r", encoding="utf-8") as f:
-                    old = json.load(f)
-                if old.get("id"):
-                    data["id"] = (old.get("id") or pid)
-                if "prompt_lines" not in old and isinstance(old.get("prompt"), str):
-                    data["prompt_lines"] = [ln.rstrip("\r") for ln in old["prompt"].split("\n")]
-        except Exception as e:
-            _log(f"[Vantage] apply: merge read failed: {e}")
+        # Only merge from disk if updating an existing file
+        if is_update:
+            try:
+                if os.path.isfile(path):
+                    with open(path, "r", encoding="utf-8") as f:
+                        old = json.load(f)
+                    if old.get("id"):
+                        data["id"] = old.get("id") or pid
+                    if "prompt_lines" not in old and isinstance(old.get("prompt"), str):
+                        data["prompt_lines"] = [
+                            s for s in (p.strip() for p in old["prompt"].replace("\r\n","\n").replace("\r","\n").split("\n"))
+                            if s
+                        ]
+            except Exception as e:
+                _log(f"[Vantage] apply: merge read failed: {e}")
 
+        # Save: overwrite only in update mode OR when creating a brand-new unique file
         try:
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            _log(f"[Vantage] apply: saved {target_file}")
+            _save_json(path, data)
+            _log(f"[Vantage] apply: saved {target_file} (update={is_update})")
         except Exception as e:
             _log(f"[Vantage] apply: save failed: {e}")
 
+
         payload = json.dumps(data, ensure_ascii=False)
         _log(f"[Vantage] apply: returning payload file={data['file']} id={data['id']}")
-        return (payload,)
-
+        
+        project_entry = {
+            "id": data["id"],
+            "name": data["name"],
+            "prompt": data["prompt"],
+            "prompt_lines": data["prompt_lines"],
+            "existing": bool(data.get("existing", True)),
+            "file": data["file"],
+            "start_prompt": data["start_prompt"],
+            "ts": data["ts"],
+        }
+        # Option A: group under a single ui key
+        ui_payload = {"project": [project_entry]}
+        return {"ui": ui_payload, "result": (payload,)}
+        #return (payload,)
