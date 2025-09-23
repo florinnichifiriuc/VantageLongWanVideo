@@ -330,14 +330,29 @@ class VantageDualLooperI2V:
             _log(f"[Vantage Dual Looper] start_prompt {start_prompt_idx} out of range (prompt_lines={len(prompt_lines)}); resetting to 0.")
             start_prompt_idx = 0
         
-        if start_prompt_idx > 0:
-            # Each prompt line is 5 seconds; frames per prompt = fps_val * 5
-            frames_per_prompt = (int(fps_val) * 5)
-            produced_frames = int(start_prompt_idx) * frames_per_prompt
+        # After clamping, walk backward until a valid prev restart folder exists (start_prompt_idx - 1)
+        def _folder_has_pngs(p: Path) -> bool:
+            if not p.exists() or not p.is_dir():
+                return False
+            pngs = sorted(glob.glob(str(p / "*.png")))
+            return len(pngs) > 0
 
-            _log(f"[Vantage Dual Looper] resume: produced_frames set to {produced_frames} "
-                 f"(start_prompt={start_prompt_idx}, fps={fps_val}, frames_per_prompt={frames_per_prompt})")
-                 
+        original_spi = start_prompt_idx 
+        while start_prompt_idx > 0:
+            prev_dir = project_dir / f"{start_prompt_idx - 1}"
+            if _folder_has_pngs(prev_dir):
+                break
+            # decrement and continue searching backward
+            start_prompt_idx -= 1 
+
+        if original_spi != start_prompt_idx:
+            _log(f"Vantage Dual Looper: adjusted start_prompt_idx from {original_spi} to {start_prompt_idx} based on restart folder availability.")
+
+        # With final start_prompt_idx, compute produced frames and try to load resume seed
+        frames_per_prompt = int(fps_val) * 5  # 5 seconds per prompt line 
+        produced_frames = int(start_prompt_idx) * frames_per_prompt 
+        _log(f"Vantage Dual Looper: resume produced_frames set to {produced_frames} (start_prompt={start_prompt_idx}, fps={fps_val}, frames_per_prompt={frames_per_prompt}).")
+
         resume_seed_image = None
         if start_prompt_idx > 0:
             prev_dir = project_dir / f"{start_prompt_idx - 1}"
