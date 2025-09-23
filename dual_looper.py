@@ -311,14 +311,6 @@ class VantageDualLooperI2V:
             start_prompt_idx = int((pd or {}).get("start_prompt", 0))
         except Exception:
             start_prompt_idx = 0
-        
-        if start_prompt_idx > 0:
-            # Each prompt line is 5 seconds; frames per prompt = fps_val * 5
-            frames_per_prompt = (int(fps_val) * 5)
-            produced_frames = int(start_prompt_idx) * frames_per_prompt
-
-            _log(f"[Vantage Dual Looper] resume: produced_frames set to {produced_frames} "
-                 f"(start_prompt={start_prompt_idx}, fps={fps_val}, frames_per_prompt={frames_per_prompt})")
 
         # Determine prompt_lines now so we can validate start_prompt
         prompt_lines: List[str] = []
@@ -338,6 +330,14 @@ class VantageDualLooperI2V:
             _log(f"[Vantage Dual Looper] start_prompt {start_prompt_idx} out of range (prompt_lines={len(prompt_lines)}); resetting to 0.")
             start_prompt_idx = 0
         
+        if start_prompt_idx > 0:
+            # Each prompt line is 5 seconds; frames per prompt = fps_val * 5
+            frames_per_prompt = (int(fps_val) * 5)
+            produced_frames = int(start_prompt_idx) * frames_per_prompt
+
+            _log(f"[Vantage Dual Looper] resume: produced_frames set to {produced_frames} "
+                 f"(start_prompt={start_prompt_idx}, fps={fps_val}, frames_per_prompt={frames_per_prompt})")
+                 
         resume_seed_image = None
         if start_prompt_idx > 0:
             prev_dir = project_dir / f"{start_prompt_idx - 1}"
@@ -532,4 +532,3 @@ class VantageDualLooperI2V:
         if all_frames.ndim == 3:
             all_frames = all_frames.unsqueeze(0)  # (1,H,W,C)
         return (all_frames,)
-
