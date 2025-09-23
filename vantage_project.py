@@ -204,13 +204,17 @@ class VantageProject:
             except Exception as e:
                 _log(f"[Vantage] apply: load selected id failed: {e}")
 
-        pid = (project_id or "").strip() or file_id or uuid.uuid4().hex
+        if existing_project:
+            pid = (project_id or "").strip() or file_id or uuid.uuid4().hex
+        else:
+            pid = uuid.uuid4().hex
         _log(f"[Vantage] apply: effective pid={pid}")
 
         proj_dir = os.path.join(VANTAGE_DIR, pid)
         os.makedirs(proj_dir, exist_ok=True)
-
-        effective_start_prompt = _last_index_plus_one(proj_dir) if not start_prompt or start_prompt <= 0 else start_prompt
+        _log(f"[Vantage] apply: start prompt: {start_prompt}")
+        effective_start_prompt = start_prompt
+        _log(f"[Vantage] apply: effective_start_prompt: {effective_start_prompt}")
         safe_name = project_name or f"project_{pid[:8]}"
 
         # Decide whether this is an update to an existing file or a new file
