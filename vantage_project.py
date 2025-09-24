@@ -126,6 +126,10 @@ def _save_json(path: str, data: Dict[str, Any]) -> None:
 def _safe_name(s: str) -> str:
     return "".join(c for c in (s or "") if c.isalnum() or c in "._-")
 
+def get_vantage_dir() -> str:
+    """Return the absolute path to the shared Vantage directory."""
+    return VANTAGE_DIR
+
 def setup_routes(app):
     if aiohttp_web is None:
         _log("[Vantage] aiohttp not available; routes not registered")
@@ -304,3 +308,4 @@ class VantageProject:
         ui_payload = {"project": [project_entry]}
         return {"ui": ui_payload, "result": (payload,)}
         #return (payload,)
+

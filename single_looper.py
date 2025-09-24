@@ -3,6 +3,7 @@ from typing import Any, List, Optional, Tuple
 import json
 import os, glob, shutil
 from pathlib import Path
+from .vantage_project import get_vantage_dir
 
 import numpy as np
 
@@ -45,11 +46,7 @@ def _to(x: torch.Tensor, device, dtype):
 
 # ——— disk I/O helpers ———
 def _get_root_vantage_dir() -> Path:
-    try:
-        root = Path(FileLocator.get_base_path())
-    except Exception:
-        root = Path(os.getcwd())
-    return root / "vantage"
+    return Path(get_vantage_dir())
     
 def _ensure_dir(p: Path):
     p.mkdir(parents=True, exist_ok=True)
@@ -275,7 +272,7 @@ class VantageSingleLooperI2V:
 
         # Each prompt line equals 5 seconds (unchanged behavior)
         total_seconds = max(1, len(prompt_lines) * 5)
-        target_frames = (total_seconds * fps_val) + 1
+        target_frames = (total_seconds * fps_val) + 1 if fps_val == 16 else (total_seconds * fps_val) + 4  
 
         model_device, model_dtype = _model_device_dtype(model)
         cpu = torch.device("cpu")
@@ -341,8 +338,10 @@ class VantageSingleLooperI2V:
             _log(f"Vantage Single Looper: adjusted start_prompt_idx from {original_spi} to {start_prompt_idx} based on restart folder availability.")
 
         # With final start_prompt_idx, compute produced frames and try to load resume seed
-        frames_per_prompt = int(fps_val) * 5  # 5 seconds per prompt line 
-        produced_frames = int(start_prompt_idx) * frames_per_prompt 
+        frames_per_prompt = int(fps_val) * 5  # 5 seconds per prompt line
+   
+        produced_frames = int(start_prompt_idx) * frames_per_prompt
+        
         _log(f"Vantage Single Looper: resume produced_frames set to {produced_frames} (start_prompt={start_prompt_idx}, fps={fps_val}, frames_per_prompt={frames_per_prompt}).") 
 
         resume_seed_image = None
@@ -410,7 +409,7 @@ class VantageSingleLooperI2V:
             full = parts[0]
             return positive1, negative1, {"samples": full}
 
-        while produced_frames < total_frames:
+        while produced_frames < total_frames - 4:
             remaining = (total_frames - produced_frames)
             win_T = min(L, remaining + 1)
             contrib = win_T  # decoded frames this window before any discard
@@ -522,3 +521,4 @@ class VantageSingleLooperI2V:
         if all_frames.ndim == 3:
             all_frames = all_frames.unsqueeze(0)  # (1,H,W,C)
         return (all_frames,)
+

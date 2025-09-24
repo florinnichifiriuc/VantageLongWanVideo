@@ -3,6 +3,7 @@ from typing import Any, List, Optional, Tuple
 import json
 import os, glob, shutil
 from pathlib import Path
+from .vantage_project import get_vantage_dir
 
 import numpy as np
 
@@ -45,11 +46,7 @@ def _to(x: torch.Tensor, device, dtype):
 
 # ——— disk I/O helpers ———
 def _get_root_vantage_dir() -> Path:
-    try:
-        root = Path(FileLocator.get_base_path())
-    except Exception:
-        root = Path(os.getcwd())
-    return root / "vantage"
+    return Path(get_vantage_dir())
     
 def _ensure_dir(p: Path):
     p.mkdir(parents=True, exist_ok=True)
@@ -190,7 +187,9 @@ class VantageDualLooperI2V:
 
     def _ksampler_call(self, model, positive, negative, latent, steps, cfg, sampler_name, scheduler, denoise, seed, disable_noise=False, start_step=None, last_step=None,  force_full_denoise=False):
         import nodes
-        _log(f"[Vantage Dual Looper] Add Noise: {disable_noise} Return with noise {force_full_denoise}")
+        result_force = not force_full_denoise
+        result_disable = not disable_noise
+        _log(f"[Vantage Dual Looper] Add Noise: {result_disable} Return with noise {result_force}")
         out, = nodes.common_ksampler(model=model, seed=int(seed), steps=int(steps), cfg=float(cfg), sampler_name=str(sampler_name), scheduler=str(scheduler), positive=positive, negative=negative, latent={"samples": latent["samples"]}, denoise=float(denoise), disable_noise=disable_noise, start_step=start_step, last_step=last_step, force_full_denoise=force_full_denoise)
         return {"samples": out["samples"]}
 
@@ -283,7 +282,7 @@ class VantageDualLooperI2V:
 
         # Each prompt line equals 5 seconds (unchanged behavior)
         total_seconds = max(1, len(prompt_lines) * 5)
-        target_frames = (total_seconds * fps_val) + 1
+        target_frames = (total_seconds * fps_val) + 1 if fps_val == 16 else (total_seconds * fps_val) + 4
 
         model_device, model_dtype = _model_device_dtype(model_high)
         cpu = torch.device("cpu")
@@ -418,7 +417,7 @@ class VantageDualLooperI2V:
             full = parts[0]
             return positive1, negative1, {"samples": full}
 
-        while produced_frames < total_frames:
+        while produced_frames < total_frames - 4:
             remaining = (total_frames - produced_frames)
             win_T = min(L, remaining + 1)
             contrib = win_T  # decoded frames this window before any discard
@@ -547,3 +546,4 @@ class VantageDualLooperI2V:
         if all_frames.ndim == 3:
             all_frames = all_frames.unsqueeze(0)  # (1,H,W,C)
         return (all_frames,)
+
