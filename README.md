@@ -20,8 +20,9 @@
 -   Organized output structure for easy project management    
 -   Works with both **single-model** and **dual-model** workflows
 
-```
 [![Watch the video](https://github.com/vantagewithai/Vantage-HunyuanFoley/blob/main/src/example_workflows/vantage-video.png)](https://youtu.be/wC87B7rIvyQ)
+
+```
 
 ## 🧰 Requirements
 - ComfyUI (current version).
