@@ -376,14 +376,14 @@ class VantageDualLooperI2V:
                             _log(f"[Vantage Dual Looper] resume seed via imageio from {pngs[-1]}")
                         except Exception as e:
                             _log(f"[Vantage Dual Looper] failed to read last image for resume: {e}")
-            # Clean current and future loop folders
-            to_delete = [p for p in project_dir.iterdir() if p.is_dir() and p.name.isdigit() and int(p.name) >= start_prompt_idx]
-            for p in sorted(to_delete, key=lambda x: int(x.name)):
-                try:
-                    shutil.rmtree(p, ignore_errors=True)
-                    _log(f"[Vantage Dual Looper] removed folder {p}")
-                except Exception as e:
-                    _log(f"[Vantage Dual Looper] could not remove {p}: {e}")
+        # Clean current and future loop folders
+        to_delete = [p for p in project_dir.iterdir() if p.is_dir() and p.name.isdigit() and int(p.name) >= start_prompt_idx]
+        for p in sorted(to_delete, key=lambda x: int(x.name)):
+            try:
+                shutil.rmtree(p, ignore_errors=True)
+                _log(f"[Vantage Dual Looper] removed folder {p}")
+            except Exception as e:
+                _log(f"[Vantage Dual Looper] could not remove {p}: {e}")
 
         prev_seed_image = None  # BHWC float [0,1], single frame selected by overlap
         
