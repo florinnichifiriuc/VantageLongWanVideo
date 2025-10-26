@@ -129,7 +129,11 @@ class VantageSingleLooperI2V:
                 "clip_vision": (IO.CLIP_VISION,),
                 "start_image": (IO.IMAGE,),
             },
-            "optional": {},
+           "optional": {
+                "model_init": ("MODEL",),
+                "cfg_init": ("FLOAT", {"default": 3.5, "min": 0.0, "max": 100.0, "step": 0.1, "round": 0.01}),
+                "steps_init": ("INT", {"default": 1, "min": 0, "max": 10000}),
+            },
         }
 
     RETURN_TYPES = (IO.IMAGE,)
@@ -231,7 +235,8 @@ class VantageSingleLooperI2V:
         steps, cfg, sampler_name, scheduler, denoise,
         fps, overlap,
         seed, crop, vae,
-        clip_vision, start_image
+        clip_vision, start_image,
+        model_init = None, cfg_init = 3.5, steps_init = 1,
     ):
         # Parse project_data
         pd = project_data or {}
@@ -430,10 +435,24 @@ class VantageSingleLooperI2V:
             win_lat_gpu = {"samples": _to(win_lat_cpu["samples"], model_device, model_dtype)}
 
             # Sample
-            steps_eff = int(steps)
-            out_win = self._ksampler_call(
-                model, positive, negative, win_lat_gpu, steps_eff, cfg, sampler_name, scheduler, denoise, seed64
-            )
+             # Sample
+            init_steps = 0
+            if model_init is not None:
+                init_steps = int(steps_init)
+            steps_eff = init_steps + int(steps)
+            steps_i = init_steps
+            steps_h = int(steps) + steps_i            
+            if model_init is not None:
+                out_win = self._ksampler_call(
+                    model_init, positive, negative, win_lat_gpu, steps_eff, cfg_init, sampler_name, scheduler, denoise, seed64, False, 0, steps_i, False 
+                )
+                out_win = self._ksampler_call(
+                    model, positive, negative, out_win, steps_eff, cfg, sampler_name, scheduler, denoise, seed64
+                )
+            else:
+                out_win = self._ksampler_call(
+                    model, positive, negative, win_lat_gpu, steps_eff, cfg, sampler_name, scheduler, denoise, seed64
+                )
 
             # Bring to CPU for VAE decode
             out_win_cpu = _to(out_win["samples"], cpu, torch.float32)
