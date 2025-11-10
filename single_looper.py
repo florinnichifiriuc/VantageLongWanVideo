@@ -1,3 +1,4 @@
+
 import torch
 from typing import Any, List, Optional, Tuple
 import json
@@ -15,6 +16,7 @@ from comfy_api.latest import io, ComfyExtension
 import comfy.samplers
 import node_helpers
 import comfy.clip_vision
+import nodes
 
 # ——— logging ———
 def _log(msg: str):
@@ -26,6 +28,79 @@ def _log(msg: str):
 # ——— tensor helpers ———
 LATENT_DOWNSCALE = 8
 LATENT_CHANNELS = 16
+
+def _is_valid_frame(img: torch.Tensor | None) -> bool:
+    if img is None or not isinstance(img, torch.Tensor) or img.numel() == 0:
+        return False
+    # Accept HWC or BHWC; reject if any spatial dim is 0
+    shape = tuple(img.shape)
+    if len(shape) == 3:   # H,W,C
+        return shape[0] > 0 and shape[1] > 0
+    if len(shape) == 4:   # B,H,W,C (Comfy BHWC)
+        return shape[0] > 0 and shape[1] > 0 and shape[2] > 0
+    return False
+
+# --- Minimal VACE control builder (emulates WanVideoVACEStartToEndFrame) ---
+def _make_control_from_start_end(
+    vae,
+    start_img: torch.Tensor | None,
+    end_img: torch.Tensor | None,
+    win_T: int,
+    width: int,
+    height: int,
+    empty_frame_level: float = 0.50,
+    start_index: int = 0,
+    end_index: int = -1,   # -1 means "don’t place end frame"
+) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+    """
+    Returns (control_video, control_masks) as BHWC float tensors in [0,1] with length win_T.
+    - control_video is filled with a neutral gray 'empty_frame_level'
+    - start_img is injected at start_index with mask=1
+    - end_img (optional) is injected at end_index with mask=1
+    Shapes expected by WanVaceToVideo: (T, H, W, 3) and (T, H, W, 1)
+    """
+    if win_T <= 0:
+        return None, None
+
+    dev = (
+        start_img.device if isinstance(start_img, torch.Tensor) else
+        (end_img.device if isinstance(end_img, torch.Tensor) else torch.device("cpu"))
+    )
+
+    control = torch.ones((win_T, height, width, 3), device=dev, dtype=torch.float32) * float(empty_frame_level)
+    masks   = torch.zeros((win_T, 1, height, width), device=dev, dtype=torch.float32)
+
+    def _prep(img: torch.Tensor | None) -> torch.Tensor | None:
+        if img is None or not isinstance(img, torch.Tensor) or img.numel() == 0:
+            return None
+        if not _is_valid_frame(img):
+            return None            
+        x = img
+        if x.dim() == 4:  # (B,H,W,C) -> first
+            x = x[0]
+        # resize to (height,width); input expected BHWC/HWC in [0,1]
+        x = x.unsqueeze(0).permute(0, 3, 1, 2)              # BCHW
+        x = comfy.utils.common_upscale(x, width, height, "bilinear", "center")
+        x = x.permute(0, 2, 3, 1)[0].clamp(0, 1)            # HWC
+        if x.shape[-1] == 1:                                # ensure RGB
+            x = x.repeat(1, 1, 3)
+        return x
+
+    s = _prep(start_img)
+    e = _prep(end_img)
+
+    si = max(0, min(win_T - 1, int(start_index)))
+    ei = None if end_index < 0 else max(0, min(win_T - 1, int(end_index)))
+
+    if s is not None:
+        control[si] = s
+    masks[si]   = 1.0
+    if e is not None and ei is not None:
+        control[ei] = e
+    masks[ei]   = 1.0
+    if s is None and e is None:
+        return None, None
+    return control, masks
 
 def _align_px(x, multiple=16):
     return max(multiple, (int(x) // multiple) * multiple)
@@ -130,9 +205,7 @@ class VantageSingleLooperI2V:
                 "start_image": (IO.IMAGE,),
             },
            "optional": {
-                "model_init": ("MODEL",),
-                "cfg_init": ("FLOAT", {"default": 3.5, "min": 0.0, "max": 100.0, "step": 0.1, "round": 0.01}),
-                "steps_init": ("INT", {"default": 1, "min": 0, "max": 10000}),
+                "aio_mega": ("BOOLEAN", {"default": False, "tooltip": "Use WanVaceToVideo like in Rapid AIO Mega; first window uses start image (if present) & 'denoise' as strength; otherwise T2V. Subsequent windows always use previous window's last frame as reference_image at strength 1.0."}),  
             },
         }
 
@@ -152,7 +225,7 @@ class VantageSingleLooperI2V:
 
         img = image
         if not isinstance(img, torch.Tensor):
-            raise ValueError("encode_clip_vision expected IMAGE tensor.")
+            return None  # allow missing img
         img = img.to(torch.float32).clamp(0, 1)
         if img.dim() == 3:
             if img.shape[-1] in (3, 4):
@@ -166,9 +239,12 @@ class VantageSingleLooperI2V:
             if (not last_channel_like) and mid_channel_like:
                 img = img.permute(0, 2, 3, 1).contiguous()
         else:
-            raise ValueError(f"Unsupported IMAGE rank {img.dim()}, expected 3 or 4 dims.")
+            return None
         if img.dim() != 4 or img.shape[-1] not in (1, 3, 4):
-            raise ValueError(f"encode_clip_vision needs BHWC with C in (1,3,4), got {tuple(img.shape)}")
+            return None
+        # Reject zero-sized tensors early
+        if img.shape[-3] == 0 or img.shape[-2] == 0:
+            return None
         output = clip_vision.encode_image(img, crop=crop_image)
         return output
 
@@ -191,13 +267,15 @@ class VantageSingleLooperI2V:
     def _get_clip_vision_latent(
         self, positive, negative, vae, width, height, length, batch_size, start_image=None, clip_vision_output=None,
     ):
+        if start_image is not None and not _is_valid_frame(start_image):
+            start_image = None
         # sampler input (window-sized latent “noise”/zeros)
         latent = torch.zeros(
             [batch_size, 16, ((length - 1) // 4) + 1, height // 8, width // 8],
             device=comfy.model_management.intermediate_device()
         )
         tdim = 2  # [B, C, T, H, W]
-        if start_image is not None:
+        if start_image is not None and isinstance(start_image, torch.Tensor) and start_image.numel() > 0:
             start_image = comfy.utils.common_upscale(
                 start_image[:length].movedim(-1, 1),
                 width, height, "bilinear", "center"
@@ -236,8 +314,12 @@ class VantageSingleLooperI2V:
         fps, overlap,
         seed, crop, vae,
         clip_vision, start_image,
-        model_init = None, cfg_init = 3.5, steps_init = 1,
+        aio_mega: bool = False,
     ):
+        has_start_image = _is_valid_frame(start_image)
+        model_init = model if has_start_image else None
+        cfg_init = 3.5
+        steps_init = 1 if has_start_image else 0
         # Parse project_data
         pd = project_data or {}
         if isinstance(pd, str):
@@ -383,21 +465,30 @@ class VantageSingleLooperI2V:
                 _log(f"[Vantage Single Looper] could not remove {p}: {e}")
 
         prev_seed_image = None  # BHWC float [0,1], single frame selected by overlap
-        
+        # Determine base mode
+        t2v_mode = start_image is None or (isinstance(start_image, torch.Tensor) and start_image.numel() == 0)
+
         if start_prompt_idx > 0 and resume_seed_image is not None:
             prev_seed_image = resume_seed_image  # will be used for the first generated loop (loop_idx = start_prompt_idx)
 
         # Start from start_prompt index
         loop_idx = int(start_prompt_idx)
 
+        try:
+            init_steps_total = max(int(steps_init), 0)
+        except Exception:
+            init_steps_total = 0
+        init_model_resolved = model if (init_steps_total > 0 and model_init is None) else model_init
+        use_init_stage = init_model_resolved is not None and init_steps_total > 0
+
         def build_window_latent(win_T: int, positive, negative, loopidx):
             parts: List[torch.Tensor] = []
 
             # Choose seed image: first loop uses start_image; subsequent loops use last decoded image
-            if loopidx == 0:
-                seed_image = start_image
+            if loopidx == start_prompt_idx:
+                seed_image = start_image if _is_valid_frame(start_image) else None
             else:
-                seed_image = prev_seed_image
+                seed_image = prev_seed_image if _is_valid_frame(prev_seed_image) else None
 
             clip_vision_output = self.encode_clip_vision(clip_vision, seed_image, crop) if seed_image is not None else None
             positive1, negative1, clip_lats = self._get_clip_vision_latent(
@@ -420,7 +511,6 @@ class VantageSingleLooperI2V:
             contrib = win_T  # decoded frames this window before any discard
             _log(f"[Vantage Single Looper] remaining={remaining}, win_T={win_T}, contrib={contrib}, produced={produced_frames}")
 
-
             # Positive prompt: select line by loop index (clamped)
             if loop_idx < len(prompt_lines):
                 pos_str = prompt_lines[loop_idx]
@@ -432,26 +522,101 @@ class VantageSingleLooperI2V:
 
             # Build latent window on CPU, then move to model device/dtype
             positive, negative, win_lat_cpu = build_window_latent(win_T, positive, negative, loop_idx)
+
+            # --- AIO Mega routing with proper strength/reference rules ---
+            if aio_mega:
+                wan_cls = getattr(nodes, "WanVaceToVideo", None) or nodes.NODE_CLASS_MAPPINGS.get("WanVaceToVideo")
+                if wan_cls is None:
+                    _log("[Vantage Single Looper] WanVaceToVideo node missing; skipping aio_mega routing.")
+                else:
+                    wan = wan_cls()
+                    func_name = getattr(wan_cls, "FUNCTION", "encode")
+                    wan_callable = getattr(wan, func_name, None)
+                    if wan_callable is None:
+                        _log(f"[Vantage Single Looper] WanVaceToVideo has no callable '{func_name}'; skipping aio_mega routing.")
+                    else:
+                        # Decide reference and strength:
+                        # 1) First window:
+                        #    - If start_image present -> I2V: use start_image, strength = denoise (requested behavior).
+                        #    - Else -> T2V: reference_image=None, strength=0.0 (ignored).
+                        # 2) Subsequent windows:
+                        #    - Always use last image from previous window as reference_image, strength=1.0
+                        # Decide reference and strength for AIO
+                        # Decide reference + strength per Rapid AIO Mega rules
+                        if loop_idx == start_prompt_idx:
+                            i2v_first = _is_valid_frame(start_image)
+                            ref_img = start_image if i2v_first else None
+                            strength_for_wan = 1.0 if i2v_first else 0.0
+                        else:
+                            ref_img = prev_seed_image if _is_valid_frame(prev_seed_image) else None
+                            strength_for_wan = 1.0 if ref_img is not None else 0.0
+
+                        control_video, control_masks = (None, None)
+                        if ref_img is not None:
+                            control_video, control_masks = _make_control_from_start_end(
+                                vae=vae,
+                                start_img=ref_img,
+                                end_img=None,
+                                win_T=win_T,
+                                width=width,
+                                height=height,
+                                empty_frame_level=0.50,
+                                start_index=0,
+                                end_index=-1,
+                            )
+                            if isinstance(control_masks, torch.Tensor):
+                                if control_masks.shape[0] == 0 or control_masks.shape[-2] == 0 or control_masks.shape[-1] == 0:
+                                    control_masks = None
+                                else:
+                                    control_masks = control_masks.contiguous()
+
+                        result = wan_callable(
+                            positive=positive,
+                            negative=negative,
+                            vae=vae,
+                            width=width,
+                            height=height,
+                            length=win_T,
+                            batch_size=batch_size,
+                            strength=strength_for_wan,
+                            control_video=control_video,
+                            control_masks=control_masks,
+                            reference_image=ref_img,   # keep this so trim_latent is honored when present
+                        )
+                        # Handle returns: NodeOutput, tuple/dict of (positive, negative, latent[, trim_latent])
+                        if isinstance(result, io.NodeOutput):
+                            outputs = result.result or ()
+                        elif isinstance(result, tuple):
+                            outputs = result
+                        else:
+                            outputs = None
+
+                        if isinstance(outputs, tuple) or isinstance(outputs, list):
+                            if len(outputs) >= 3:
+                                positive, negative, win_lat_cpu = outputs[0], outputs[1], outputs[2]
+                            else:
+                                _log("[Vantage Single Looper] WanVaceToVideo returned insufficient outputs; skipping aio_mega routing.")
+                        elif isinstance(result, dict):
+                            positive = result.get("positive", positive)
+                            negative = result.get("negative", negative)
+                            win_lat_cpu = result.get("latent", win_lat_cpu)
+                        else:
+                            _log("[Vantage Single Looper] WanVaceToVideo returned unexpected data; skipping aio_mega routing.")
+
             win_lat_gpu = {"samples": _to(win_lat_cpu["samples"], model_device, model_dtype)}
 
-            # Sample
-             # Sample
-            init_steps = 0
-            if model_init is not None:
-                init_steps = int(steps_init)
-            steps_eff = init_steps + int(steps)
-            steps_i = init_steps
-            steps_h = int(steps) + steps_i            
-            if model_init is not None:
-                out_win = self._ksampler_call(
-                    model_init, positive, negative, win_lat_gpu, steps_eff, cfg_init, sampler_name, scheduler, denoise, seed64, False, 0, steps_i, False 
+            latent_for_sampling = win_lat_gpu
+            if use_init_stage:
+                steps_total = init_steps_total + int(steps)
+                latent_for_sampling = self._ksampler_call(
+                    init_model_resolved, positive, negative, latent_for_sampling, steps_total, cfg_init, sampler_name, scheduler, denoise, seed64, False, 0, init_steps_total, False
                 )
                 out_win = self._ksampler_call(
-                    model, positive, negative, out_win, steps_eff, cfg, sampler_name, scheduler, denoise, seed64
+                    model, positive, negative, latent_for_sampling, steps_total, cfg, sampler_name, scheduler, denoise, seed64
                 )
             else:
                 out_win = self._ksampler_call(
-                    model, positive, negative, win_lat_gpu, steps_eff, cfg, sampler_name, scheduler, denoise, seed64
+                    model, positive, negative, latent_for_sampling, int(steps), cfg, sampler_name, scheduler, denoise, seed64
                 )
 
             # Bring to CPU for VAE decode
@@ -502,12 +667,14 @@ class VantageSingleLooperI2V:
             # Cache next loop seed frame according to overlap:
             # pick the Nth frame from the end of the current decoded batch BEFORE discarding for save
             try:
-                if img.shape[0] >= pick_n:
-                    # index from end: -pick_n; keep as a single-frame BHWC tensor
-                    prev_seed_image = img[-pick_n:-pick_n+1] if pick_n > 1 else img[-1:]
-                elif img.shape[0] > 0:
-                    prev_seed_image = img[-1:]  # fallback to last frame if not enough frames
+                n = int(img.shape[0])
+                if n > 0:
+                    k = 1 if pick_n <= 0 else min(int(pick_n), n)
+                    idx = n - k
+                    prev_seed_image = img[idx:idx + 1]
                 else:
+                    prev_seed_image = None
+                if prev_seed_image is not None and not _is_valid_frame(prev_seed_image):
                     prev_seed_image = None
             except Exception as e:
                 _log(f"[Vantage Single Looper] warning: could not cache seed frame: {e}")
@@ -540,4 +707,3 @@ class VantageSingleLooperI2V:
         if all_frames.ndim == 3:
             all_frames = all_frames.unsqueeze(0)  # (1,H,W,C)
         return (all_frames,)
-
